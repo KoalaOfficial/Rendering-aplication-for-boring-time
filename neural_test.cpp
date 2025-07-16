@@ -1,4 +1,4 @@
-#include "neural_network.hpp"
+#include "neural.h"
 #include <iostream>
 
 int main() {

@@ -1,2 +1,4 @@
 # Rendering-aplication-for-boring-time
-Rendering aplication
+
+To repozytorium zostało utworzone z powodu chęci rozbudowy aplikacji którą zacząłem robić z nudy
+

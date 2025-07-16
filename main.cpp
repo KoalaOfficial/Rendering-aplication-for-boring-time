@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <gl/gl.h>
 #include <cmath>
+#include <gl/glu.h>
 #include <random>
 #include <vector>
 #include <fstream>

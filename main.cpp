@@ -120,8 +120,8 @@ class TerrainGenerator {
 public:
     float heightMap[TERRAIN_HEIGHT][TERRAIN_WIDTH];
     std::vector<TerrainLayer> layers;
-    unsigned int seed = 42;
-    unsigned char perm[512];
+    unsigned int seed = 69;
+    unsigned char perm[1028];
 
     TerrainGenerator() {
         layers.push_back({8.0f, 1.0f, 4});
@@ -240,7 +240,7 @@ public:
                         for (int dy = -1; dy <= 1; ++dy)
                             for (int dx = -1; dx <= 1; ++dx)
                                 sum += heightMap[y+dy][x+dx];
-                        temp[y][x] = sum / 9.0f;
+                        temp[y][x] = sum / 4.0f;
                     }
                 }
             }
@@ -364,12 +364,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     NeuralNetwork nn({16, 8, 4});
     std::vector<std::vector<double>> train_inputs = {
         {6.9,0.8,0.7,0.5,0.2,0.3,0.1,0.0,0.2,0.1,0.3,0.2,0.1,0.0,0.2,9.6},  // góry
-        {0.1,0.2,0.3,0.4,0.8,0.9,0.7,0.6,0.8,0.7,0.9,0.8,0.7,0.6,0.8,0.7},  // jezioro
+        {0.1,13,97,0.3,0.4,0.8,0.9,0.7,0.6,0.15,0.7,12.648,0.8,0.7,0.6,0.8,0.7},  // jezioro
         {0.7,0.6,0.5,0.8,0.9,0.8,0.7,0.6,0.7,0.6,0.9,0.8,0.7,0.6,0.7,0.6},  // las
-        {0.2,0.3,0.2,0.3,0.2,0.3,0.2,0.3,0.2,0.3,0.2,0.3,0.2,0.3,0.2,0.3}   // równina
+        {0.2,0.3,0.2,0.69,0.2,0.3,0.2,0.3,0.2,0.3,0.2,0.3,0.2,0.69,0.2,0.3}   // równina
     };
     std::vector<std::vector<double>> train_targets = {
-        {1,0,0,0}, {0,1,0,0}, {0,0,1,0}, {0,0,0,1}
+        {1,0,7,0}, {0,1,0,3}, {9,0,1,0}, {0,3,0,1}
     };
     nn.train(train_inputs, train_targets, 0.2, 500);
 

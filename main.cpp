@@ -1,4 +1,3 @@
-
 #include <windows.h>
 #include <gl/gl.h>
 #include <cmath>
@@ -9,7 +8,7 @@
 #include <algorithm>
 #include <cassert>
 
-// --- SEKCJA SIECI NEURONOWEJ (z neural.h) ---
+// --- SIEĆ NEURONOWA ---
 class Neuron {
 public:
     std::vector<double> weights;
@@ -112,7 +111,7 @@ public:
     }
 };
 
-// --- SEKCJA GENERACJI TERENU (z terrain.h) ---
+// --- PARAMETRY TERENU ---
 #define TERRAIN_WIDTH 128
 #define TERRAIN_HEIGHT 128
 
@@ -129,12 +128,10 @@ public:
     unsigned int seed = 42;
 
     TerrainGenerator() {
-        // Przykładowe warstwy
         layers.push_back({8.0f, 1.0f, 4});
         layers.push_back({16.0f, 0.5f, 3});
     }
 
-    // Pomocnicze Perlin noise
     float Fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
     float Lerp(float a, float b, float t) { return a + t * (b - a); }
     float Grad(int hash, float x, float y) {
@@ -186,7 +183,6 @@ public:
         }
     }
 
-    // Dodatkowy algorytm: góry
     void GenerateMountains() {
         for (int y = 0; y < TERRAIN_HEIGHT; ++y) {
             for (int x = 0; x < TERRAIN_WIDTH; ++x) {
@@ -198,7 +194,6 @@ public:
         }
     }
 
-    // Algorytm: jezioro
     void GenerateLake() {
         for (int y = 0; y < TERRAIN_HEIGHT; ++y) {
             for (int x = 0; x < TERRAIN_WIDTH; ++x) {
@@ -206,24 +201,22 @@ public:
                 float dy = (y - TERRAIN_HEIGHT/2.0f) / (TERRAIN_HEIGHT/2.0f);
                 float dist = std::sqrt(dx*dx + dy*dy);
                 if (dist < 0.4)
-                    heightMap[y][x] = -2.0f + 2.0f * dist; // woda
+                    heightMap[y][x] = -2.0f + 2.0f * dist;
             }
         }
     }
 
-    // Algorytm: las
     void GenerateForest() {
         std::mt19937 gen(seed);
         std::uniform_real_distribution<float> tree_dist(0.5f, 1.2f);
         for (int y = 0; y < TERRAIN_HEIGHT; ++y) {
             for (int x = 0; x < TERRAIN_WIDTH; ++x) {
                 if ((x+y)%11 == 0)
-                    heightMap[y][x] += tree_dist(gen); // drzewo
+                    heightMap[y][x] += tree_dist(gen);
             }
         }
     }
 
-    // Algorytm: równina
     void GeneratePlains() {
         for (int y = 0; y < TERRAIN_HEIGHT; ++y)
             for (int x = 0; x < TERRAIN_WIDTH; ++x)
@@ -231,9 +224,37 @@ public:
     }
 };
 
-// --- PROSTA KLASYFIKACJA OBRAZU ---
+// --- KAMERA GRACZA ---
+struct Camera {
+    float x, y, z;
+    float pitch, yaw;
+    float moveSpeed, turnSpeed;
+
+    Camera() : x(TERRAIN_WIDTH/2.0f), z(TERRAIN_HEIGHT/2.0f), y(10.0f), pitch(0), yaw(0), moveSpeed(1.5f), turnSpeed(0.03f) {}
+
+    void Move(float forward, float strafe, TerrainGenerator& terrain) {
+        float rad = yaw * M_PI / 180.0f;
+        float dx = std::cos(rad) * forward - std::sin(rad) * strafe;
+        float dz = std::sin(rad) * forward + std::cos(rad) * strafe;
+        x += dx * moveSpeed;
+        z += dz * moveSpeed;
+        if (x < 0) x = 0; if (x > TERRAIN_WIDTH-1) x = TERRAIN_WIDTH-1;
+        if (z < 0) z = 0; if (z > TERRAIN_HEIGHT-1) z = TERRAIN_HEIGHT-1;
+        y = terrain.heightMap[(int)z][(int)x] + 3.0f; // wysokość nad terenem
+    }
+
+    void Turn(float dpitch, float dyaw) {
+        pitch += dpitch * turnSpeed;
+        yaw += dyaw * turnSpeed;
+        if (pitch < -80) pitch = -80;
+        if (pitch > 80) pitch = 80;
+        if (yaw < 0) yaw += 360;
+        if (yaw > 360) yaw -= 360;
+    }
+};
+
+// --- KLASYFIKACJA KRAJOBRAZU ---
 std::string recognize_landscape(const std::vector<double>& image_features, NeuralNetwork& nn) {
-    // input: cechy obrazu (np. rozkład jasności, tekstury, histogram)
     auto result = nn.predict(image_features);
     int idx = std::distance(result.begin(), std::max_element(result.begin(), result.end()));
     switch (idx) {
@@ -245,15 +266,42 @@ std::string recognize_landscape(const std::vector<double>& image_features, Neura
     }
 }
 
+// --- RENDERER OPENGL ---
+void RenderTerrain(TerrainGenerator& terrain, Camera& camera, HDC hDC) {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glViewport(0, 0, 800, 600);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluPerspective(70.0, 800.0/600.0, 0.1, 1000.0);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    float camY = camera.y;
+    float lookX = camera.x + std::cos(camera.yaw * M_PI / 180.0f);
+    float lookZ = camera.z + std::sin(camera.yaw * M_PI / 180.0f);
+    gluLookAt(camera.x, camY, camera.z, lookX, camY + std::tan(camera.pitch * M_PI / 180.0f), lookZ, 0, 1, 0);
+
+    // Renderowanie siatki terenu
+    glColor3f(0.3f, 0.8f, 0.3f);
+    for (int y = 0; y < TERRAIN_HEIGHT-1; ++y) {
+        glBegin(GL_TRIANGLE_STRIP);
+        for (int x = 0; x < TERRAIN_WIDTH; ++x) {
+            glVertex3f(x, terrain.heightMap[y][x], y);
+            glVertex3f(x, terrain.heightMap[y+1][x], y+1);
+        }
+        glEnd();
+    }
+    SwapBuffers(hDC);
+}
+
 // --- MAIN ---
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     // Inicjalizacja generatora terenu
     TerrainGenerator terrain;
 
-    // Inicjalizacja sieci neuronowej klasyfikującej krajobrazy (4 wyjścia: gory, jezioro, las, równina)
-    NeuralNetwork nn({16, 8, 4}); // 16 cech obrazu, 8 neuronow, 4 klasy
-
-    // Przygotuj dane treningowe (przykładowe wektory cech i typy krajobrazu)
+    // Sieć neuronowa (4 klasy krajobrazu)
+    NeuralNetwork nn({16, 8, 4});
     std::vector<std::vector<double>> train_inputs = {
         {0.9,0.8,0.7,0.5,0.2,0.3,0.1,0.0,0.2,0.1,0.3,0.2,0.1,0.0,0.2,0.1},  // góry
         {0.1,0.2,0.3,0.4,0.8,0.9,0.7,0.6,0.8,0.7,0.9,0.8,0.7,0.6,0.8,0.7},  // jezioro
@@ -265,23 +313,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     };
     nn.train(train_inputs, train_targets, 0.2, 500);
 
-    // Przykład cech obrazu do klasyfikacji (można podmienić na wyciągnięte z prawdziwego obrazka)
-    std::vector<double> image_features = {
-        0.9,0.7,0.6,0.5,0.2,0.2,0.1,0.1,0.2,0.1,0.3,0.2,0.1,0.0,0.2,0.1
-    };
-
+    std::vector<double> image_features = {0.9,0.7,0.6,0.5,0.2,0.2,0.1,0.1,0.2,0.1,0.3,0.2,0.1,0.0,0.2,0.1};
     std::string terrain_type = recognize_landscape(image_features, nn);
-    std::cout << "Rozpoznany typ krajobrazu: " << terrain_type << std::endl;
 
-    // Generowanie terenu na podstawie rozpoznania
     terrain.GenerateTerrain();
     if (terrain_type == "gory") terrain.GenerateMountains();
     else if (terrain_type == "jezioro") terrain.GenerateLake();
     else if (terrain_type == "las") terrain.GenerateForest();
     else if (terrain_type == "rownina") terrain.GeneratePlains();
 
-    // Dodatkowa logika: wygładzanie, zapisywanie, wyświetlanie fragmentu heightMap
-    // Wygładzanie terenu (algorytm uśredniania)
+    // Wygładzanie terenu
     for (int it = 0; it < 2; ++it) {
         float temp[TERRAIN_HEIGHT][TERRAIN_WIDTH];
         for (int y = 1; y < TERRAIN_HEIGHT-1; ++y) {
@@ -298,19 +339,65 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 terrain.heightMap[y][x] = temp[y][x];
     }
 
-    // Zapis do pliku
-    std::ofstream out("terrain_map.bin", std::ios::binary);
-    out.write(reinterpret_cast<char*>(terrain.heightMap), sizeof(terrain.heightMap));
-    out.close();
+    // --- Tworzenie okna i kontekstu OpenGL ---
+    WNDCLASS wc = {0};
+    wc.style = CS_OWNDC;
+    wc.lpfnWndProc = DefWindowProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = "TerrainWindow";
+    RegisterClass(&wc);
 
-    // Wyświetlenie fragmentu heightMap w konsoli
-    std::cout << "Fragment heightMap:" << std::endl;
-    for (int y = 0; y < 16; ++y) {
-        for (int x = 0; x < 16; ++x)
-            std::cout << terrain.heightMap[y][x] << " ";
-        std::cout << std::endl;
+    HWND hWnd = CreateWindow(
+        wc.lpszClassName,
+        "Procedural Terrain 3D",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT,
+        800, 600,
+        NULL, NULL,
+        hInstance, NULL
+    );
+    HDC hDC = GetDC(hWnd);
+
+    PIXELFORMATDESCRIPTOR pfd = {sizeof(PIXELFORMATDESCRIPTOR), 1};
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 24;
+    int pf = ChoosePixelFormat(hDC, &pfd);
+    SetPixelFormat(hDC, pf, &pfd);
+    HGLRC hGLRC = wglCreateContext(hDC);
+    wglMakeCurrent(hDC, hGLRC);
+
+    // --- Kamera gracza ---
+    Camera camera;
+
+    // --- Główna pętla renderowania i sterowania ---
+    MSG msg;
+    bool running = true;
+    while (running) {
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) running = false;
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        // Sterowanie klawiaturą (WASD, strzałki)
+        if (GetAsyncKeyState('W')) camera.Move(1, 0, terrain);
+        if (GetAsyncKeyState('S')) camera.Move(-1, 0, terrain);
+        if (GetAsyncKeyState('A')) camera.Move(0, -1, terrain);
+        if (GetAsyncKeyState('D')) camera.Move(0, 1, terrain);
+        if (GetAsyncKeyState(VK_UP)) camera.Turn(1, 0);
+        if (GetAsyncKeyState(VK_DOWN)) camera.Turn(-1, 0);
+        if (GetAsyncKeyState(VK_LEFT)) camera.Turn(0, -2);
+        if (GetAsyncKeyState(VK_RIGHT)) camera.Turn(0, 2);
+
+        RenderTerrain(terrain, camera, hDC);
+        Sleep(16); // ~60 FPS
     }
 
-    MessageBoxA(NULL, "Generowanie terenu zakończone.", "Info", MB_OK);
+    wglMakeCurrent(NULL, NULL);
+    wglDeleteContext(hGLRC);
+    ReleaseDC(hWnd, hDC);
+    DestroyWindow(hWnd);
+
     return 0;
 }
+     

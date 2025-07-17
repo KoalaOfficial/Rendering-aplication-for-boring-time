@@ -1,3 +1,4 @@
+// main.cpp
 
 #include <windows.h>
 #include <gl/gl.h>
@@ -13,9 +14,9 @@
 #include <chrono>
 #include <sstream>
 
-#define TERRAIN_WIDTH 128
-#define TERRAIN_HEIGHT 128
-#define TERRAIN_SCALE 3.0f
+#define TERRAIN_WIDTH 256
+#define TERRAIN_HEIGHT 256
+#define TERRAIN_SCALE 5.0f
 
 #define WINDOW_WIDTH 1024
 #define WINDOW_HEIGHT 768
@@ -23,8 +24,7 @@
 LPCSTR WINDOW_CLASS = "TerrainNN3D";
 LPCSTR WINDOW_TITLE = "3D Terrain Mesh & Neural Net";
 
-//////////////////////////////////////////////////////////////////
-// --- Sieć neuronowa z zapisem/odczytem i ograniczeniem czasu ---
+// --- Sieć neuronowa ---
 class Neuron {
 public:
     std::vector<double> weights;
@@ -93,7 +93,7 @@ public:
     }
     void train(const std::vector<std::vector<double>> &inputs,
                const std::vector<std::vector<double>> &targets,
-               double lr = 0.1, size_t max_epochs = 100000, double max_seconds = 300.0) {
+               double lr = 0.1, size_t max_epochs = 100000, double max_seconds = 120.0) {
         auto start = std::chrono::high_resolution_clock::now();
         size_t epochs = 0;
         for (; epochs < max_epochs; ++epochs) {
@@ -149,15 +149,9 @@ public:
     }
 };
 
-//////////////////////////////////////////////////////////////////
-// --- Prosty Perlin noise ---
-float fade(float t) {
-    // Classic Perlin fade curve
-    return t * t * t * (t * (t * 6 - 15) + 10);
-}
-float lerp(float a, float b, float t) {
-    return a + t * (b - a);
-}
+// --- Perlin noise helpers ---
+float fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+float lerp(float a, float b, float t) { return a + t * (b - a); }
 float grad(int hash, float x, float y) {
     int h = hash & 7;
     float u = h < 4 ? x : y;
@@ -184,7 +178,6 @@ float perlin2d(float x, float y, const std::vector<int>& p) {
 
     return lerp(x1, x2, v);
 }
-// Fractal Perlin noise (octaves)
 float fractal_perlin(float x, float y, const std::vector<int>& p, int octaves = 5, float persistence = 0.5f) {
     float total = 0.0f;
     float frequency = 1.0f;
@@ -198,11 +191,45 @@ float fractal_perlin(float x, float y, const std::vector<int>& p, int octaves = 
     }
     return total / maxValue;
 }
-// Gradient terrain (simple slope)
 float gradient(float fx, float fy, float scale = 1.0f) {
     return (fx + fy) * scale;
 }
-//////////////////////////////////////////////////////////////////
+
+// --- Realistyczne generatory terenów ---
+float mountain_func(float x, float y) {
+    // Szczyty gór, strome zbocza + ridge noise
+    float r = std::sqrt((x-1.5)*(x-1.5)+(y-1.5)*(y-1.5));
+    float peak = std::exp(-(r*r)*0.8)*35.0f + std::sin(x*4 + y*3)*8.0f;
+    float ridge = std::abs(std::sin(x*7 + y*6.5)*10.0f);
+    return peak + ridge - 13f;
+}
+float valley_func(float x, float y) {
+    // Szerokie doliny, łagodne zbocza
+    float r = std::sqrt((x-2.8)*(x-2.8)+(y-0.5)*(y-0.5));
+    return -std::exp(-r * 1.3) * 30.0f + std::sin(x*2.0 + y*2.0)*2.0f;
+}
+float plateau_func(float x, float y) {
+    // Płaskowyż
+    float base = std::exp(-((x-2.2)*(x-2.2)+(y-2.2)*(y-2.2))*1.2)*22.0f;
+    float flat = std::max(0.0f, float(1.0 - std::abs(x-2.2)*0.7 - std::abs(y-2.2)*0.7))*5.0f;
+    return base + flat + std::sin(x*1.5 + y*1.5)*2.5f;
+}
+float canyon_func(float x, float y) {
+    // Kanion: głębokie, wąskie obniżenie
+    float c = std::sin(x*7.5)*std::cos(y*3.5)*10.0f - std::abs(x-1.7)*18.0f;
+    float noise = std::sin(x*2.0+y*2.5)*2.0f;
+    return c + noise;
+}
+float hill_func(float x, float y) {
+    // Pagórki
+    return std::sin(x*5.0 + y*3.0)*12.0f + std::sin(x*6.0)*4.0f + std::cos(y*6.0)*4.0f;
+}
+float plain_func(float x, float y) {
+    // Równina z lekką falą
+    return std::sin(x*1.1)*2.0f + std::sin(y*1.3)*2.0f;
+}
+
+
 // --- Struktura siatki terenu 3D ---
 struct Vertex {
     float x, y, z;
@@ -219,22 +246,26 @@ struct TerrainMesh {
         : width(w), height(h), scale(s), heights(w, std::vector<float>(h, 0.0f)), vertices(w, std::vector<Vertex>(h)) {}
 
     // --- Algorytmy generowania terenu ---
-    enum GenAlgorithm { NN, GAUSS, PERLIN, SINE, RANDOM, FRACTAL, GRADIENT, MIX };
+    enum GenAlgorithm {
+        NN, GAUSS, PERLIN, SINE, RANDOM,
+        FRACTAL, GRADIENT, MIX,
+        MOUNTAIN, VALLEY, PLATEAU, CANYON, HILL, PLAIN
+    };
     GenAlgorithm algorithm = MIX;
 
-    // --- Perlin noise permutation table ---
     std::vector<int> perlin_perm;
     void initPerlin() {
         perlin_perm.resize(512);
         std::vector<int> p(256);
         for (int i = 0; i < 256; ++i) p[i] = i;
-        std::mt19937 gen(1337); // Fixed seed for repeatability
+        std::mt19937 gen(1337);
         std::shuffle(p.begin(), p.end(), gen);
         for (int i = 0; i < 512; ++i) perlin_perm[i] = p[i & 255];
     }
 
     void generate(NeuralNetwork* nn = nullptr) {
-        if (algorithm == PERLIN || algorithm == FRACTAL || algorithm == MIX) {
+        if (algorithm == PERLIN || algorithm == FRACTAL || algorithm == MIX ||
+            algorithm == MOUNTAIN || algorithm == VALLEY || algorithm == CANYON || algorithm == HILL) {
             if (perlin_perm.empty()) initPerlin();
         }
         static std::mt19937 gen(time(0));
@@ -268,12 +299,10 @@ struct TerrainMesh {
                         break;
                     }
                     case PERLIN: {
-                        // Rozbudowany Perlin: warstwy (octaves), lepsze skalowanie
                         h = fractal_perlin(fx, fy, perlin_perm, 6, 0.5f) * 25.0f;
                         break;
                     }
                     case FRACTAL: {
-                        // Fractal sum of sines + Perlin
                         float sum = 0.0f, amp = 10.0f;
                         for (int o = 1; o <= 6; ++o) {
                             sum += std::sin(fx * o + fy * o) * amp;
@@ -287,8 +316,31 @@ struct TerrainMesh {
                         h = gradient(fx, fy, 7.0f);
                         break;
                     }
+                    case MOUNTAIN: {
+                        h = mountain_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 3, 0.7f) * 8.0f;
+                        break;
+                    }
+                    case VALLEY: {
+                        h = valley_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 2, 0.6f) * 6.0f;
+                        break;
+                    }
+                    case PLATEAU: {
+                        h = plateau_func(fx, fy) + std::sin(fx*3.5+fy*3.5)*2.0f;
+                        break;
+                    }
+                    case CANYON: {
+                        h = canyon_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 1, 0.5f) * 4.0f;
+                        break;
+                    }
+                    case HILL: {
+                        h = hill_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 2, 0.6f) * 4.0f;
+                        break;
+                    }
+                    case PLAIN: {
+                        h = plain_func(fx, fy);
+                        break;
+                    }
                     case MIX: {
-                        // Połączenie wszystkich: NN, Perlin, Gauss, Sine, Fractal, Gradient, Random
                         float h_nn = 0.0f;
                         if (nn) {
                             std::vector<double> inp = { fx, fy, std::sin(fx), std::cos(fy) };
@@ -306,10 +358,18 @@ struct TerrainMesh {
                         }
                         h_fractal += fractal_perlin(fx, fy, perlin_perm, 4, 0.5f) * 8.0f;
                         float h_gradient = gradient(fx, fy, 6.0f);
+                        float h_mountain = mountain_func(fx, fy);
+                        float h_valley = valley_func(fx, fy);
+                        float h_plateau = plateau_func(fx, fy);
+                        float h_canyon = canyon_func(fx, fy);
+                        float h_hill = hill_func(fx, fy);
+                        float h_plain = plain_func(fx, fy);
 
-                        // Blend all with weights
-                        h = 0.15f * h_nn + 0.15f * h_gauss + 0.13f * h_sine + 0.12f * h_rand +
-                            0.15f * h_perlin + 0.15f * h_fractal + 0.15f * h_gradient;
+                      // Blend all with weights – większa różnorodność
+                        h = 0.07f*h_nn + 0.07f*h_gauss + 0.07f*h_sine + 0.06f*h_rand
+                          + 0.09f*h_perlin + 0.09f*h_fractal + 0.09f*h_gradient
+                          + 0.11f*h_mountain + 0.09f*h_valley + 0.08f*h_plateau
+                          + 0.08f*h_canyon + 0.06f*h_hill + 0.04f*h_plain;
 
                         break;
                     }
@@ -319,7 +379,8 @@ struct TerrainMesh {
                 vertices[x][y].y = h;
                 vertices[x][y].z = float(y);
             }
-        // Normale
+      
+       // Normale
         for (int x = 1; x < width - 1; ++x)
             for (int y = 1; y < height - 1; ++y) {
                 float hL = heights[x - 1][y];
@@ -333,29 +394,59 @@ struct TerrainMesh {
                 float len = sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
                 v.nx /= len; v.ny /= len; v.nz /= len;
             }
+            
     }
 };
 
-//////////////////////////////////////////////////////////////////
-// --- Generowanie danych do uczenia NN ---
-void generate_training_data(std::vector<std::vector<double>>& inputs,
-                           std::vector<std::vector<double>>& targets,
-                           int count = 2000) {
+// --- Generowanie danych do uczenia NN z różnorodnością ---
+void generate_training_data_to_file(const std::string& filename, int count = 5000) {
     std::mt19937 gen(time(nullptr));
     std::uniform_real_distribution<double> dist(0.0, TERRAIN_SCALE);
-    double r = (dist(gen) * 48) / 12;
-	for (int i = 0; i < count; ++i) {
-        double x = dist(gen);
-        double y = dist(gen);
+    std::ofstream ofs(filename, std::ios::out);
+    if (!ofs.good()) return;
+
+    for (int i = 0; i < count; ++i) {
+        double x = dist(gen) / 2;
+        double y = dist(gen) * 2;
         double sx = std::sin(x);
         double sy = std::cos(y);
-        double h = std::exp ((-((x - 2.0) * (x - 2.0) + (y - 2.0) * (y - 2.0))  *  r) / 16);
+
+        int type = i % 7; // Różne typy terenu
+        double h = 0.0;
+        if (type == 0) { // mountain
+            h = mountain_func(x, y);
+        } else if (type == 1) { // valley
+            h = valley_func(x, y);
+        } else if (type == 2) { // plateau
+            h = plateau_func(x, y);
+        } else if (type == 3) { // canyon
+            h = canyon_func(x, y);
+        } else if (type == 4) { // hill
+            h = hill_func(x, y);
+        } else if (type == 5) { // plain
+            h = plain_func(x, y);
+        } else { // mix
+            h = 0.25*mountain_func(x,y) + 0.15*valley_func(x,y) + 0.15*plateau_func(x,y)
+              + 0.15*canyon_func(x,y) + 0.15*hill_func(x,y) + 0.15*plain_func(x,y);
+        }
+        ofs << x << " " << y << " " << sx << " " << sy << " " << h << "\n";
+    }
+    ofs.close();
+}
+
+void load_training_data_from_file(const std::string& filename,
+                                 std::vector<std::vector<double>>& inputs,
+                                 std::vector<std::vector<double>>& targets) {
+    std::ifstream ifs(filename);
+    if (!ifs.good()) return;
+    double x, y, sx, sy, h;
+    while (ifs >> x >> y >> sx >> sy >> h) {
         inputs.push_back({ x, y, sx, sy });
         targets.push_back({ h });
     }
+    ifs.close();
 }
 
-//////////////////////////////////////////////////////////////////
 // --- Kamera i sterowanie ---
 float cameraAngle = 60.0f;
 float cameraDist = 220.0f;
@@ -399,9 +490,8 @@ void drawTerrainMesh(const TerrainMesh& mesh) {
     glPopMatrix();
 }
 
-//////////////////////////////////////////////////////////////////
 // --- WinAPI main loop ---
-NeuralNetwork nn({ 4, 16, 8, 1 });
+NeuralNetwork nn({ 4, 24, 16, 1 });
 TerrainMesh terrain(TERRAIN_WIDTH, TERRAIN_HEIGHT, TERRAIN_SCALE);
 
 bool keys[256] = { 0 };
@@ -435,9 +525,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (wParam == '6') { terrain.algorithm = TerrainMesh::FRACTAL; needsRegenerate = true; }
         if (wParam == '7') { terrain.algorithm = TerrainMesh::GRADIENT; needsRegenerate = true; }
         if (wParam == 'M') { terrain.algorithm = TerrainMesh::MIX; needsRegenerate = true; }
+        if (wParam == '8') { terrain.algorithm = TerrainMesh::MOUNTAIN; needsRegenerate = true; }
+        if (wParam == '9') { terrain.algorithm = TerrainMesh::VALLEY; needsRegenerate = true; }
+        if (wParam == '0') { terrain.algorithm = TerrainMesh::PLATEAU; needsRegenerate = true; }
+        if (wParam == 'C') { terrain.algorithm = TerrainMesh::CANYON; needsRegenerate = true; }
+        if (wParam == 'H') { terrain.algorithm = TerrainMesh::HILL; needsRegenerate = true; }
+        if (wParam == 'P') { terrain.algorithm = TerrainMesh::PLAIN; needsRegenerate = true; }
         if (wParam == 'R') { needsRegenerate = true; }
         if (wParam == 'L') { nn.load("terrain_nn.dat"); terrain.algorithm = TerrainMesh::NN; needsRegenerate = true; }
-        if (wParam == 'P') { nn.save("terrain_nn.dat"); }
+        if (wParam == 'T') { nn.save("terrain_nn.dat"); }
         break;
     case WM_KEYUP:
         keys[wParam] = false;
@@ -451,20 +547,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
 }
 
-//////////////////////////////////////////////////////////////////
 // --- Main ---
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
-    // NN training/load
+    // 1. Generowanie/zapis danych treningowych do pliku
+    std::ifstream training_file("terrain_training_data.dat");
+    if (!training_file.good()) {
+        MessageBoxA(NULL, "Generowanie danych treningowych do pliku...", "Dane treningowe", MB_OK);
+        generate_training_data_to_file("terrain_training_data.dat", 6000);
+    }
+    training_file.close();
+
+    // 2. Trening sieci NN na tych danych (z ograniczeniem czasu)
     std::ifstream fin("terrain_nn.dat");
     if (fin.good()) {
         nn.load("terrain_nn.dat");
         fin.close();
-    }
-    else {
+    } else {
         std::vector<std::vector<double>> train_inputs, train_targets;
-        generate_training_data(train_inputs, train_targets, 4000);
-        MessageBoxA(NULL, "Training neural network on terrain peaks (max 5 min)...", "Training", MB_OK);
-        nn.train(train_inputs, train_targets, 0.1, 100000, 300.0); // 5 min limit
+        load_training_data_from_file("terrain_training_data.dat", train_inputs, train_targets);
+        MessageBoxA(NULL, "Training neural network on realistic terrain (max 1.5 min)...", "Training", MB_OK);
+        nn.train(train_inputs, train_targets, 0.07, 120000, 90.0); // 1.5 min limit
         nn.save("terrain_nn.dat");
     }
     terrain.generate(&nn);
@@ -517,7 +619,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             needsRegenerate = false;
         }
         // OpenGL render
-        glClearColor(0.2f, 0.3f, 0.6f, 1.0f);
+        glClearColor(0.21f, 0.32f, 0.51f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glMatrixMode(GL_MODELVIEW);
@@ -542,5 +644,4 @@ endloop:
     return 0;
 }
 
-// --- Koniec pliku. Teren generowany przez sieć neuronową (do 5 min treningu), mesh 3D, czysty OpenGL, WinAPI, zapis/odczyt wag, 8 algorytmów (1-NN, 2-Gauss, 3-Sine, 4-Random, 5-Perlin, 6-Fractal, 7-Gradient, 8-MIX) ---
-// Klawisze: 1-NN, 2-Gauss, 3-Sine, 4-Random, 5-Perlin, 6-Fractal, 7-Gradient, M-MIX, R-regeneruj, P-zapisz NN, L-wczytaj NN
+// --- Koniec pliku. Teraz teren ma więcej typów i realizmu: góry(8), doliny(9), płaskowyże(0), kaniony(C), pagórki(H), równiny(P), mix(M). Klawisze: 1-NN, 2-Gauss, 3-Sine, 4-Random, 5-Perlin, 6-Fractal, 7-Gradient, 8-Góry, 9-Doliny, 0-Płaskowyż, C-Kanion, H-Pagórki, P-Równina, M-MIX, R-regeneruj, T-zapisz NN, L-wczytaj NN

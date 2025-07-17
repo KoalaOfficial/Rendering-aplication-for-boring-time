@@ -153,17 +153,17 @@ public:
 float fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
 float lerp(float a, float b, float t) { return a + t * (b - a); }
 float grad(int hash, float x, float y) {
-    int h = hash & 7;
-    float u = h < 4 ? x : y;
-    float v = h < 4 ? y : x;
+    int h = hash & 15;
+    float u = h < 8 ? x : y;
+    float v = h < 4 ? y : (h == 12 || h == 14 ? x : 0);
     return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
 }
 float perlin2d(float x, float y, const std::vector<int>& p) {
-    int xi = int(x) & 255;
-    int yi = int(y) & 255;
+    int xi = int(floor(x)) & 255;
+    int yi = int(floor(y)) & 255;
 
-    float xf = x - int(x);
-    float yf = y - int(y);
+    float xf = x - floor(x);
+    float yf = y - floor(y);
 
     float u = fade(xf);
     float v = fade(yf);
@@ -178,7 +178,7 @@ float perlin2d(float x, float y, const std::vector<int>& p) {
 
     return lerp(x1, x2, v);
 }
-float fractal_perlin(float x, float y, const std::vector<int>& p, int octaves = 5, float persistence = 0.5f) {
+float fractal_perlin(float x, float y, const std::vector<int>& p, int octaves = 6, float persistence = 0.55f, float lacunarity = 2.0f) {
     float total = 0.0f;
     float frequency = 1.0f;
     float amplitude = 1.0f;
@@ -187,48 +187,53 @@ float fractal_perlin(float x, float y, const std::vector<int>& p, int octaves = 
         total += perlin2d(x * frequency, y * frequency, p) * amplitude;
         maxValue += amplitude;
         amplitude *= persistence;
-        frequency *= 2.0f;
+        frequency *= lacunarity;
     }
     return total / maxValue;
 }
-float gradient(float fx, float fy, float scale = 1.0f) {
-    return (fx + fy) * scale;
-}
 
-// --- Realistyczne generatory terenów ---
+// --- Realistyczne generatory terenów i biomów ---
 float mountain_func(float x, float y) {
-    // Szczyty gór, strome zbocza + ridge noise
     float r = std::sqrt((x-1.5)*(x-1.5)+(y-1.5)*(y-1.5));
-    float peak = std::exp(-(r*r)*0.8)*35.0f + std::sin(x*4 + y*3)*8.0f;
-    float ridge = std::abs(std::sin(x*7 + y*6.5)*10.0f);
-    return peak + ridge - 13f;
+    float peak = std::exp(-(r*r)*0.7)*45.0f + std::sin(x*6 + y*4)*11.0f;
+    float ridge = std::abs(std::sin(x*10 + y*9)*13.0f);
+    return peak + ridge - 12.0f;
 }
 float valley_func(float x, float y) {
-    // Szerokie doliny, łagodne zbocza
     float r = std::sqrt((x-2.8)*(x-2.8)+(y-0.5)*(y-0.5));
-    return -std::exp(-r * 1.3) * 30.0f + std::sin(x*2.0 + y*2.0)*2.0f;
+    return -std::exp(-r * 1.2) * 28.0f + std::sin(x*2.0 + y*2.0)*3.5f;
 }
 float plateau_func(float x, float y) {
-    // Płaskowyż
-    float base = std::exp(-((x-2.2)*(x-2.2)+(y-2.2)*(y-2.2))*1.2)*22.0f;
-    float flat = std::max(0.0f, float(1.0 - std::abs(x-2.2)*0.7 - std::abs(y-2.2)*0.7))*5.0f;
-    return base + flat + std::sin(x*1.5 + y*1.5)*2.5f;
+    float base = std::exp(-((x-2.2)*(x-2.2)+(y-2.2)*(y-2.2))*1.1)*30.0f;
+    float flat = std::max(0.0f, float(1.0 - std::abs(x-2.2)*0.7 - std::abs(y-2.2)*0.7))*8.0f;
+    return base + flat + std::sin(x*1.7 + y*1.7)*4.0f;
 }
 float canyon_func(float x, float y) {
-    // Kanion: głębokie, wąskie obniżenie
-    float c = std::sin(x*7.5)*std::cos(y*3.5)*10.0f - std::abs(x-1.7)*18.0f;
-    float noise = std::sin(x*2.0+y*2.5)*2.0f;
+    float c = std::sin(x*8.5)*std::cos(y*4.0)*12.0f - std::abs(x-1.7)*22.0f;
+    float noise = std::sin(x*2.5+y*2.8)*3.0f;
     return c + noise;
 }
 float hill_func(float x, float y) {
-    // Pagórki
-    return std::sin(x*5.0 + y*3.0)*12.0f + std::sin(x*6.0)*4.0f + std::cos(y*6.0)*4.0f;
+    return std::sin(x*7.0 + y*5.0)*17.0f + std::sin(x*7.5)*7.0f + std::cos(y*7.0)*7.0f;
 }
 float plain_func(float x, float y) {
-    // Równina z lekką falą
-    return std::sin(x*1.1)*2.0f + std::sin(y*1.3)*2.0f;
+    return std::sin(x*1.3)*2.8f + std::sin(y*1.6)*2.8f;
 }
-
+float desert_func(float x, float y, const std::vector<int>& p) {
+    float sand = fractal_perlin(x, y, p, 3, 0.55f) * 7.0f + std::sin(x*3.0 + y*2.5)*3.0f;
+    float ripple = std::sin(x*9.0 + y*8.0)*1.5f;
+    return sand + ripple - 2.0f;
+}
+float forest_func(float x, float y, const std::vector<int>& p) {
+    float base = fractal_perlin(x, y, p, 5, 0.7f) * 9.0f + std::sin(x*2.0 + y*2.0)*2.0f;
+    float bumps = std::sin(x*12.0 + y*11.0)*2.5f;
+    return base + bumps;
+}
+float tundra_func(float x, float y, const std::vector<int>& p) {
+    float flat = fractal_perlin(x, y, p, 4, 0.6f) * 6.0f;
+    float wave = std::sin(x*2.1)*1.0f + std::cos(y*1.7)*1.0f;
+    return flat + wave - 1.0f;
+}
 
 // --- Struktura siatki terenu 3D ---
 struct Vertex {
@@ -245,11 +250,11 @@ struct TerrainMesh {
     TerrainMesh(int w, int h, float s)
         : width(w), height(h), scale(s), heights(w, std::vector<float>(h, 0.0f)), vertices(w, std::vector<Vertex>(h)) {}
 
-    // --- Algorytmy generowania terenu ---
     enum GenAlgorithm {
         NN, GAUSS, PERLIN, SINE, RANDOM,
         FRACTAL, GRADIENT, MIX,
-        MOUNTAIN, VALLEY, PLATEAU, CANYON, HILL, PLAIN
+        MOUNTAIN, VALLEY, PLATEAU, CANYON, HILL, PLAIN,
+        DESERT, FOREST, TUNDRA
     };
     GenAlgorithm algorithm = MIX;
 
@@ -264,10 +269,8 @@ struct TerrainMesh {
     }
 
     void generate(NeuralNetwork* nn = nullptr) {
-        if (algorithm == PERLIN || algorithm == FRACTAL || algorithm == MIX ||
-            algorithm == MOUNTAIN || algorithm == VALLEY || algorithm == CANYON || algorithm == HILL) {
-            if (perlin_perm.empty()) initPerlin();
-        }
+        if (perlin_perm.empty()) initPerlin();
+
         static std::mt19937 gen(time(0));
         static std::uniform_real_distribution<float> dist(-20.0f, 20.0f);
 
@@ -299,45 +302,57 @@ struct TerrainMesh {
                         break;
                     }
                     case PERLIN: {
-                        h = fractal_perlin(fx, fy, perlin_perm, 6, 0.5f) * 25.0f;
+                        h = fractal_perlin(fx, fy, perlin_perm, 8, 0.53f) * 30.0f;
                         break;
                     }
                     case FRACTAL: {
                         float sum = 0.0f, amp = 10.0f;
-                        for (int o = 1; o <= 6; ++o) {
+                        for (int o = 1; o <= 8; ++o) {
                             sum += std::sin(fx * o + fy * o) * amp;
-                            amp *= 0.5f;
+                            amp *= 0.53f;
                         }
-                        sum += fractal_perlin(fx, fy, perlin_perm, 5, 0.6f) * 10.0f;
+                        sum += fractal_perlin(fx, fy, perlin_perm, 7, 0.62f) * 12.0f;
                         h = sum;
                         break;
                     }
                     case GRADIENT: {
-                        h = gradient(fx, fy, 7.0f);
+                        h = (fx + fy) * 8.0f;
                         break;
                     }
                     case MOUNTAIN: {
-                        h = mountain_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 3, 0.7f) * 8.0f;
+                        h = mountain_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 4, 0.65f) * 10.0f;
                         break;
                     }
                     case VALLEY: {
-                        h = valley_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 2, 0.6f) * 6.0f;
+                        h = valley_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 3, 0.67f) * 8.0f;
                         break;
                     }
                     case PLATEAU: {
-                        h = plateau_func(fx, fy) + std::sin(fx*3.5+fy*3.5)*2.0f;
+                        h = plateau_func(fx, fy) + std::sin(fx*3.5+fy*3.5)*3.2f;
                         break;
                     }
                     case CANYON: {
-                        h = canyon_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 1, 0.5f) * 4.0f;
+                        h = canyon_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 2, 0.65f) * 6.0f;
                         break;
                     }
                     case HILL: {
-                        h = hill_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 2, 0.6f) * 4.0f;
+                        h = hill_func(fx, fy) + fractal_perlin(fx, fy, perlin_perm, 3, 0.67f) * 6.0f;
                         break;
                     }
                     case PLAIN: {
                         h = plain_func(fx, fy);
+                        break;
+                    }
+                    case DESERT: {
+                        h = desert_func(fx, fy, perlin_perm);
+                        break;
+                    }
+                    case FOREST: {
+                        h = forest_func(fx, fy, perlin_perm);
+                        break;
+                    }
+                    case TUNDRA: {
+                        h = tundra_func(fx, fy, perlin_perm);
                         break;
                     }
                     case MIX: {
@@ -350,27 +365,30 @@ struct TerrainMesh {
                         float h_gauss = float(std::exp(-((fx - 2.0) * (fx - 2.0) + (fy - 2.0) * (fy - 2.0)) / 2.0) * 40.0f - 20.0f);
                         float h_sine = float((std::sin(fx * 2.0) + std::cos(fy * 2.0)) * 10.0f);
                         float h_rand = dist(gen);
-                        float h_perlin = fractal_perlin(fx, fy, perlin_perm, 6, 0.5f) * 25.0f;
-                        float h_fractal = 0.0f, amp = 10.0f;
-                        for (int o = 1; o <= 6; ++o) {
+                        float h_perlin = fractal_perlin(fx, fy, perlin_perm, 8, 0.55f) * 32.0f;
+                        float h_fractal = 0.0f, amp = 11.0f;
+                        for (int o = 1; o <= 8; ++o) {
                             h_fractal += std::sin(fx * o + fy * o) * amp;
-                            amp *= 0.6f;
+                            amp *= 0.54f;
                         }
-                        h_fractal += fractal_perlin(fx, fy, perlin_perm, 4, 0.5f) * 8.0f;
-                        float h_gradient = gradient(fx, fy, 6.0f);
+                        h_fractal += fractal_perlin(fx, fy, perlin_perm, 6, 0.58f) * 9.5f;
+                        float h_gradient = (fx + fy) * 8.0f;
                         float h_mountain = mountain_func(fx, fy);
                         float h_valley = valley_func(fx, fy);
                         float h_plateau = plateau_func(fx, fy);
                         float h_canyon = canyon_func(fx, fy);
                         float h_hill = hill_func(fx, fy);
                         float h_plain = plain_func(fx, fy);
+                        float h_desert = desert_func(fx, fy, perlin_perm);
+                        float h_forest = forest_func(fx, fy, perlin_perm);
+                        float h_tundra = tundra_func(fx, fy, perlin_perm);
 
-                      // Blend all with weights – większa różnorodność
-                        h = 0.07f*h_nn + 0.07f*h_gauss + 0.07f*h_sine + 0.06f*h_rand
-                          + 0.09f*h_perlin + 0.09f*h_fractal + 0.09f*h_gradient
-                          + 0.11f*h_mountain + 0.09f*h_valley + 0.08f*h_plateau
-                          + 0.08f*h_canyon + 0.06f*h_hill + 0.04f*h_plain;
-
+                        // Blend all types
+                        h = 0.06f*h_nn + 0.06f*h_gauss + 0.06f*h_sine + 0.05f*h_rand
+                          + 0.07f*h_perlin + 0.07f*h_fractal + 0.07f*h_gradient
+                          + 0.11f*h_mountain + 0.08f*h_valley + 0.07f*h_plateau
+                          + 0.08f*h_canyon + 0.07f*h_hill + 0.04f*h_plain
+                          + 0.05f*h_desert + 0.05f*h_forest + 0.05f*h_tundra;
                         break;
                     }
                 }
@@ -379,8 +397,22 @@ struct TerrainMesh {
                 vertices[x][y].y = h;
                 vertices[x][y].z = float(y);
             }
-      
-       // Normale
+
+        // --- Wygladzanie powierzchni (smooth) ---
+        std::vector<std::vector<float>> smoothed(width, std::vector<float>(height, 0.0f));
+        for (int x = 1; x < width-1; ++x)
+            for (int y = 1; y < height-1; ++y) {
+                smoothed[x][y] = (heights[x][y]*0.5f +
+                                  heights[x-1][y]*0.1f + heights[x+1][y]*0.1f +
+                                  heights[x][y-1]*0.1f + heights[x][y+1]*0.1f +
+                                  heights[x-1][y-1]*0.05f + heights[x+1][y+1]*0.05f +
+                                  heights[x-1][y+1]*0.05f + heights[x+1][y-1]*0.05f);
+            }
+        for (int x = 1; x < width-1; ++x)
+            for (int y = 1; y < height-1; ++y)
+                heights[x][y] = smoothed[x][y];
+
+        // --- Normale
         for (int x = 1; x < width - 1; ++x)
             for (int y = 1; y < height - 1; ++y) {
                 float hL = heights[x - 1][y];
@@ -394,12 +426,50 @@ struct TerrainMesh {
                 float len = sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
                 v.nx /= len; v.ny /= len; v.nz /= len;
             }
-            
     }
 };
 
+// --- Kamera gracza (first-person) ---
+struct Camera {
+    float x = 128.0f, y = 25.0f, z = 128.0f;
+    float pitch = 0.0f, yaw = 0.0f;
+    float speed = 1.7f;
+    bool onGround = true;
+
+    void update(bool* keys, TerrainMesh& terrain) {
+        float forward = 0, right = 0, up = 0;
+        if (keys['W']) forward += speed;
+        if (keys['S']) forward -= speed;
+        if (keys['A']) right -= speed;
+        if (keys['D']) right += speed;
+        if (keys[VK_SPACE]) up += speed*0.7f;
+        if (keys[VK_CONTROL]) up -= speed*0.7f;
+
+        float radYaw = yaw * 3.14159f / 180.0f;
+        float radPitch = pitch * 3.14159f / 180.0f;
+        float dx = cos(radYaw) * cos(radPitch);
+        float dz = sin(radYaw) * cos(radPitch);
+
+        x += dx * forward + dz * right;
+        z += dz * forward - dx * right;
+        y += up;
+
+        x = std::max(2.0f, std::min(x, float(terrain.width-2)));
+        z = std::max(2.0f, std::min(z, float(terrain.height-2)));
+        int ix = int(x), iz = int(z);
+        if (ix >= 0 && iz >= 0 && ix < terrain.width && iz < terrain.height) {
+            float targetY = terrain.heights[ix][iz] + 2.9f;
+            y += (targetY - y) * 0.35f;
+        }
+    }
+};
+
+Camera playerCam;
+POINT lastMouse = {0,0};
+bool mouseCaptured = false;
+
 // --- Generowanie danych do uczenia NN z różnorodnością ---
-void generate_training_data_to_file(const std::string& filename, int count = 5000) {
+void generate_training_data_to_file(const std::string& filename, int count = 7000) {
     std::mt19937 gen(time(nullptr));
     std::uniform_real_distribution<double> dist(0.0, TERRAIN_SCALE);
     std::ofstream ofs(filename, std::ios::out);
@@ -411,23 +481,21 @@ void generate_training_data_to_file(const std::string& filename, int count = 500
         double sx = std::sin(x);
         double sy = std::cos(y);
 
-        int type = i % 7; // Różne typy terenu
+        int type = i % 10;
         double h = 0.0;
-        if (type == 0) { // mountain
-            h = mountain_func(x, y);
-        } else if (type == 1) { // valley
-            h = valley_func(x, y);
-        } else if (type == 2) { // plateau
-            h = plateau_func(x, y);
-        } else if (type == 3) { // canyon
-            h = canyon_func(x, y);
-        } else if (type == 4) { // hill
-            h = hill_func(x, y);
-        } else if (type == 5) { // plain
-            h = plain_func(x, y);
-        } else { // mix
-            h = 0.25*mountain_func(x,y) + 0.15*valley_func(x,y) + 0.15*plateau_func(x,y)
-              + 0.15*canyon_func(x,y) + 0.15*hill_func(x,y) + 0.15*plain_func(x,y);
+        if (type == 0) h = mountain_func(x, y);
+        else if (type == 1) h = valley_func(x, y);
+        else if (type == 2) h = plateau_func(x, y);
+        else if (type == 3) h = canyon_func(x, y);
+        else if (type == 4) h = hill_func(x, y);
+        else if (type == 5) h = plain_func(x, y);
+        else if (type == 6) h = desert_func(x, y, std::vector<int>(256,0));
+        else if (type == 7) h = forest_func(x, y, std::vector<int>(256,0));
+        else if (type == 8) h = tundra_func(x, y, std::vector<int>(256,0));
+        else {
+            h = 0.17*mountain_func(x,y) + 0.11*valley_func(x,y) + 0.11*plateau_func(x,y)
+              + 0.11*canyon_func(x,y) + 0.11*hill_func(x,y) + 0.11*plain_func(x,y)
+              + 0.14*desert_func(x,y,std::vector<int>(256,0)) + 0.14*forest_func(x,y,std::vector<int>(256,0)) + 0.14*tundra_func(x,y,std::vector<int>(256,0));
         }
         ofs << x << " " << y << " " << sx << " " << sy << " " << h << "\n";
     }
@@ -447,13 +515,7 @@ void load_training_data_from_file(const std::string& filename,
     ifs.close();
 }
 
-// --- Kamera i sterowanie ---
-float cameraAngle = 60.0f;
-float cameraDist = 220.0f;
-float cameraY = 35.0f;
-float cameraRotX = -30.0f;
-float cameraRotY = 30.0f;
-
+// --- OpenGL setup ---
 void setupOpenGL(int w, int h) {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
@@ -471,14 +533,21 @@ void setupOpenGL(int w, int h) {
     glLoadIdentity();
 }
 
+// --- Rysowanie terenu z kolorami biomów ---
 void drawTerrainMesh(const TerrainMesh& mesh) {
     glPushMatrix();
     glTranslatef(-mesh.width / 2.0f, 0.0f, -mesh.height / 2.0f);
-    glColor3f(0.7f, 0.7f, 0.7f);
     for (int x = 0; x < mesh.width - 1; ++x) {
         glBegin(GL_TRIANGLE_STRIP);
         for (int y = 0; y < mesh.height; ++y) {
             const Vertex& v1 = mesh.vertices[x][y];
+            float h = mesh.heights[x][y];
+            if (h > 22.0f) glColor3f(0.62f, 0.54f, 0.47f);
+            else if (h > 12.0f) glColor3f(0.48f, 0.65f, 0.34f);
+            else if (h > 4.0f) glColor3f(0.84f, 0.74f, 0.46f);
+            else if (h < -16.0f) glColor3f(0.77f, 0.58f, 0.31f);
+            else if (h < -5.0f) glColor3f(0.78f, 0.78f, 0.85f);
+            else glColor3f(0.49f, 0.74f, 0.72f);
             glNormal3f(v1.nx, v1.ny, v1.nz);
             glVertex3f(v1.x, v1.y, v1.z);
             const Vertex& v2 = mesh.vertices[x + 1][y];
@@ -490,25 +559,36 @@ void drawTerrainMesh(const TerrainMesh& mesh) {
     glPopMatrix();
 }
 
+// --- Sterowanie i obsługa myszki ---
+bool keys[256] = { 0 };
+bool needsRegenerate = false;
+HWND global_hwnd = NULL;
+
+void ProcessKeys() {
+    // Obrót kamery myszką
+    if (mouseCaptured) {
+        POINT pt;
+        GetCursorPos(&pt);
+        float dx = float(pt.x - lastMouse.x);
+        float dy = float(pt.y - lastMouse.y);
+        playerCam.yaw += dx * 0.18f;
+        playerCam.pitch -= dy * 0.16f;
+        playerCam.pitch = std::max(-80.0f, std::min(80.0f, playerCam.pitch));
+        lastMouse = pt;
+        RECT rect;
+        GetWindowRect(global_hwnd, &rect);
+        int cx = (rect.left+rect.right)/2, cy = (rect.top+rect.bottom)/2;
+        SetCursorPos(cx, cy);
+        lastMouse.x = cx; lastMouse.y = cy;
+    }
+
+    // Ruch gracza po terenie
+    playerCam.update(keys, terrain);
+}
+
 // --- WinAPI main loop ---
 NeuralNetwork nn({ 4, 24, 16, 1 });
 TerrainMesh terrain(TERRAIN_WIDTH, TERRAIN_HEIGHT, TERRAIN_SCALE);
-
-bool keys[256] = { 0 };
-bool needsRegenerate = false;
-
-void ProcessKeys() {
-    if (keys[VK_LEFT]) cameraAngle += 1.0f;
-    if (keys[VK_RIGHT]) cameraAngle -= 1.0f;
-    if (keys[VK_UP]) cameraY += 2.0f;
-    if (keys[VK_DOWN]) cameraY -= 2.0f;
-    if (keys['W']) cameraDist -= 2.0f;
-    if (keys['S']) cameraDist += 2.0f;
-    if (keys['A']) cameraRotY -= 1.0f;
-    if (keys['D']) cameraRotY += 1.0f;
-    if (keys['Q']) cameraRotX -= 1.0f;
-    if (keys['E']) cameraRotX += 1.0f;
-}
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
@@ -531,15 +611,33 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (wParam == 'C') { terrain.algorithm = TerrainMesh::CANYON; needsRegenerate = true; }
         if (wParam == 'H') { terrain.algorithm = TerrainMesh::HILL; needsRegenerate = true; }
         if (wParam == 'P') { terrain.algorithm = TerrainMesh::PLAIN; needsRegenerate = true; }
+        if (wParam == 'D') { terrain.algorithm = TerrainMesh::DESERT; needsRegenerate = true; }
+        if (wParam == 'F') { terrain.algorithm = TerrainMesh::FOREST; needsRegenerate = true; }
+        if (wParam == 'T') { terrain.algorithm = TerrainMesh::TUNDRA; needsRegenerate = true; }
         if (wParam == 'R') { needsRegenerate = true; }
         if (wParam == 'L') { nn.load("terrain_nn.dat"); terrain.algorithm = TerrainMesh::NN; needsRegenerate = true; }
-        if (wParam == 'T') { nn.save("terrain_nn.dat"); }
+        if (wParam == 'S') { nn.save("terrain_nn.dat"); }
         break;
     case WM_KEYUP:
         keys[wParam] = false;
         break;
     case WM_SIZE:
         setupOpenGL(LOWORD(lParam), HIWORD(lParam));
+        break;
+    case WM_LBUTTONDOWN:
+        mouseCaptured = true;
+        SetCapture(hwnd);
+        RECT rect;
+        GetWindowRect(hwnd, &rect);
+        int cx = (rect.left+rect.right)/2, cy = (rect.top+rect.bottom)/2;
+        SetCursorPos(cx, cy);
+        lastMouse.x = cx; lastMouse.y = cy;
+        ShowCursor(FALSE);
+        break;
+    case WM_LBUTTONUP:
+        mouseCaptured = false;
+        ReleaseCapture();
+        ShowCursor(TRUE);
         break;
     default:
         return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -553,7 +651,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     std::ifstream training_file("terrain_training_data.dat");
     if (!training_file.good()) {
         MessageBoxA(NULL, "Generowanie danych treningowych do pliku...", "Dane treningowe", MB_OK);
-        generate_training_data_to_file("terrain_training_data.dat", 6000);
+        generate_training_data_to_file("terrain_training_data.dat", 7000);
     }
     training_file.close();
 
@@ -565,8 +663,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     } else {
         std::vector<std::vector<double>> train_inputs, train_targets;
         load_training_data_from_file("terrain_training_data.dat", train_inputs, train_targets);
-        MessageBoxA(NULL, "Training neural network on realistic terrain (max 1.5 min)...", "Training", MB_OK);
-        nn.train(train_inputs, train_targets, 0.07, 120000, 90.0); // 1.5 min limit
+        MessageBoxA(NULL, "Training neural network on realistic terrain (max 2 min)...", "Training", MB_OK);
+        nn.train(train_inputs, train_targets, 0.07, 150000, 120.0);
         nn.save("terrain_nn.dat");
     }
     terrain.generate(&nn);
@@ -587,6 +685,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         CW_USEDEFAULT, CW_USEDEFAULT, WINDOW_WIDTH, WINDOW_HEIGHT,
         0, 0, hInst, 0);
     if (!hwnd) return -2;
+    global_hwnd = hwnd; // do obsługi myszki
 
     HDC hDC = GetDC(hwnd);
     PIXELFORMATDESCRIPTOR pfd;
@@ -618,17 +717,23 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             terrain.generate(terrain.algorithm == TerrainMesh::NN || terrain.algorithm == TerrainMesh::MIX ? &nn : nullptr);
             needsRegenerate = false;
         }
+
         // OpenGL render
         glClearColor(0.21f, 0.32f, 0.51f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
-        float camX = cameraDist * std::cos(cameraAngle * 3.1415f / 180.0f);
-        float camZ = cameraDist * std::sin(cameraAngle * 3.1415f / 180.0f);
-        gluLookAt(camX, cameraY, camZ, 0, 0, 0, 0, 1, 0);
-        glRotatef(cameraRotX, 1, 0, 0);
-        glRotatef(cameraRotY, 0, 1, 0);
+
+        // Kamera gracza (first-person)
+        float radYaw = playerCam.yaw * 3.14159f / 180.0f;
+        float radPitch = playerCam.pitch * 3.14159f / 180.0f;
+        float lookX = playerCam.x + cos(radYaw) * cos(radPitch);
+        float lookY = playerCam.y + sin(radPitch);
+        float lookZ = playerCam.z + sin(radYaw) * cos(radPitch);
+        gluLookAt(playerCam.x, playerCam.y, playerCam.z,
+                  lookX, lookY, lookZ,
+                  0, 1, 0);
 
         drawTerrainMesh(terrain);
 
@@ -644,4 +749,6 @@ endloop:
     return 0;
 }
 
-// --- Koniec pliku. Teraz teren ma więcej typów i realizmu: góry(8), doliny(9), płaskowyże(0), kaniony(C), pagórki(H), równiny(P), mix(M). Klawisze: 1-NN, 2-Gauss, 3-Sine, 4-Random, 5-Perlin, 6-Fractal, 7-Gradient, 8-Góry, 9-Doliny, 0-Płaskowyż, C-Kanion, H-Pagórki, P-Równina, M-MIX, R-regeneruj, T-zapisz NN, L-wczytaj NN
+// --- Klawisze do wyboru biomu/terenu: 1-NN, 2-Gauss, 3-Sine, 4-Random, 5-Perlin, 6-Fractal, 7-Gradient, M-Mix,
+// 8-Mountain, 9-Valley, 0-Plateau, C-Canyon, H-Hill, P-Plain, D-Desert, F-Forest, T-Tundra, R-Regenerate, S-Save NN, L-Load NN.
+// --- Kamera gracza (WASD + myszka + SPACE/CTRL) -- kliknij LPM aby sterować widokiem ---

@@ -1,5 +1,5 @@
 // main.cpp
-
+#include <algorithm> 
 #include <windows.h>
 #include <gl/gl.h>
 #include <gl/glu.h>
@@ -8,11 +8,12 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
-#include <algorithm>
 #include <cassert>
 #include <ctime>
 #include <chrono>
 #include <sstream>
+
+#define CLAMP(x, upper, lower) (std::min(upper, std::max(x, lower)))
 
 #define TERRAIN_WIDTH 256
 #define TERRAIN_HEIGHT 256
@@ -23,6 +24,11 @@
 
 LPCSTR WINDOW_CLASS = "TerrainNN3D";
 LPCSTR WINDOW_TITLE = "3D Terrain Mesh & Neural Net";
+
+
+void HandleTerrainAlgorithmSelection(WPARAM wParam);
+void CaptureMouse(HWND hwnd);
+void ReleaseMouse();
 
 // --- Sieć neuronowa ---
 class Neuron {
@@ -559,91 +565,128 @@ void drawTerrainMesh(const TerrainMesh& mesh) {
     glPopMatrix();
 }
 
-// --- Sterowanie i obsługa myszki ---
-bool keys[256] = { 0 };
-bool needsRegenerate = false;
-HWND global_hwnd = NULL;
-
-void ProcessKeys() {
-    // Obrót kamery myszką
-    if (mouseCaptured) {
-        POINT pt;
-        GetCursorPos(&pt);
-        float dx = float(pt.x - lastMouse.x);
-        float dy = float(pt.y - lastMouse.y);
-        playerCam.yaw += dx * 0.18f;
-        playerCam.pitch -= dy * 0.16f;
-        playerCam.pitch = std::max(-80.0f, std::min(80.0f, playerCam.pitch));
-        lastMouse = pt;
-        RECT rect;
-        GetWindowRect(global_hwnd, &rect);
-        int cx = (rect.left+rect.right)/2, cy = (rect.top+rect.bottom)/2;
-        SetCursorPos(cx, cy);
-        lastMouse.x = cx; lastMouse.y = cy;
-    }
-
-    // Ruch gracza po terenie
-    playerCam.update(keys, terrain);
-}
 
 // --- WinAPI main loop ---
 NeuralNetwork nn({ 4, 24, 16, 1 });
 TerrainMesh terrain(TERRAIN_WIDTH, TERRAIN_HEIGHT, TERRAIN_SCALE);
 
+// --- Sterowanie i obsługa myszki ---
+bool keys[256] = { 0 };
+bool needsRegenerate = false;
+HWND global_hwnd = NULL;
+
+
+
+// Funkcja obsługująca klawisze i ruch myszy, aktualizująca kamerę i stan gry
+void ProcessKeys() {
+    if (mouseCaptured) {
+        POINT pt;
+        GetCursorPos(&pt);
+        float dx = static_cast<float>(pt.x - lastMouse.x);
+        float dy = static_cast<float>(pt.y - lastMouse.y);
+
+        playerCam.yaw += dx * 0.18f;
+        playerCam.pitch -= dy * 0.16f;
+        playerCam.pitch = CLAMP(playerCam.pitch, -80.0f, 80.0f);
+
+        lastMouse = pt;
+
+        RECT rect;
+        GetWindowRect(global_hwnd, &rect);
+        int cx = (rect.left + rect.right) / 2;
+        int cy = (rect.top + rect.bottom) / 2;
+        SetCursorPos(cx, cy);
+        lastMouse.x = cx;
+        lastMouse.y = cy;
+    }
+
+    playerCam.update(keys, terrain);
+}
+
+// Funkcja obsługi komunikatów Windows
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-    case WM_CLOSE:
-        PostQuitMessage(0);
-        break;
-    case WM_KEYDOWN:
-        keys[wParam] = true;
-        if (wParam == '1') { terrain.algorithm = TerrainMesh::NN; needsRegenerate = true; }
-        if (wParam == '2') { terrain.algorithm = TerrainMesh::GAUSS; needsRegenerate = true; }
-        if (wParam == '3') { terrain.algorithm = TerrainMesh::SINE; needsRegenerate = true; }
-        if (wParam == '4') { terrain.algorithm = TerrainMesh::RANDOM; needsRegenerate = true; }
-        if (wParam == '5') { terrain.algorithm = TerrainMesh::PERLIN; needsRegenerate = true; }
-        if (wParam == '6') { terrain.algorithm = TerrainMesh::FRACTAL; needsRegenerate = true; }
-        if (wParam == '7') { terrain.algorithm = TerrainMesh::GRADIENT; needsRegenerate = true; }
-        if (wParam == 'M') { terrain.algorithm = TerrainMesh::MIX; needsRegenerate = true; }
-        if (wParam == '8') { terrain.algorithm = TerrainMesh::MOUNTAIN; needsRegenerate = true; }
-        if (wParam == '9') { terrain.algorithm = TerrainMesh::VALLEY; needsRegenerate = true; }
-        if (wParam == '0') { terrain.algorithm = TerrainMesh::PLATEAU; needsRegenerate = true; }
-        if (wParam == 'C') { terrain.algorithm = TerrainMesh::CANYON; needsRegenerate = true; }
-        if (wParam == 'H') { terrain.algorithm = TerrainMesh::HILL; needsRegenerate = true; }
-        if (wParam == 'P') { terrain.algorithm = TerrainMesh::PLAIN; needsRegenerate = true; }
-        if (wParam == 'D') { terrain.algorithm = TerrainMesh::DESERT; needsRegenerate = true; }
-        if (wParam == 'F') { terrain.algorithm = TerrainMesh::FOREST; needsRegenerate = true; }
-        if (wParam == 'T') { terrain.algorithm = TerrainMesh::TUNDRA; needsRegenerate = true; }
-        if (wParam == 'R') { needsRegenerate = true; }
-        if (wParam == 'L') { nn.load("terrain_nn.dat"); terrain.algorithm = TerrainMesh::NN; needsRegenerate = true; }
-        if (wParam == 'S') { nn.save("terrain_nn.dat"); }
-        break;
-    case WM_KEYUP:
-        keys[wParam] = false;
-        break;
-    case WM_SIZE:
-        setupOpenGL(LOWORD(lParam), HIWORD(lParam));
-        break;
-    case WM_LBUTTONDOWN:
-        mouseCaptured = true;
-        SetCapture(hwnd);
-        RECT rect;
-        GetWindowRect(hwnd, &rect);
-        int cx = (rect.left+rect.right)/2, cy = (rect.top+rect.bottom)/2;
-        SetCursorPos(cx, cy);
-        lastMouse.x = cx; lastMouse.y = cy;
-        ShowCursor(FALSE);
-        break;
-    case WM_LBUTTONUP:
-        mouseCaptured = false;
-        ReleaseCapture();
-        ShowCursor(TRUE);
-        break;
-    default:
-        return DefWindowProc(hwnd, msg, wParam, lParam);
+        case WM_CLOSE:
+            PostQuitMessage(0);
+            break;
+
+        case WM_KEYDOWN:
+            keys[wParam] = true;
+            HandleTerrainAlgorithmSelection(wParam);
+            break;
+
+        case WM_KEYUP:
+            keys[wParam] = false;
+            break;
+
+        case WM_SIZE:
+            setupOpenGL(LOWORD(lParam), HIWORD(lParam));
+            break;
+
+        case WM_LBUTTONDOWN:
+            CaptureMouse(hwnd);
+            break;
+
+        case WM_LBUTTONUP:
+            ReleaseMouse();
+            break;
+
+        default:
+            return DefWindowProc(hwnd, msg, wParam, lParam);
     }
     return 0;
 }
+
+void HandleTerrainAlgorithmSelection(WPARAM wParam) {
+    switch (wParam) {
+        case '1': terrain.algorithm = TerrainMesh::NN; break;
+        case '2': terrain.algorithm = TerrainMesh::GAUSS; break;
+        case '3': terrain.algorithm = TerrainMesh::SINE; break;
+        case '4': terrain.algorithm = TerrainMesh::RANDOM; break;
+        case '5': terrain.algorithm = TerrainMesh::PERLIN; break;
+        case '6': terrain.algorithm = TerrainMesh::FRACTAL; break;
+        case '7': terrain.algorithm = TerrainMesh::GRADIENT; break;
+        case 'M': terrain.algorithm = TerrainMesh::MIX; break;
+        case '8': terrain.algorithm = TerrainMesh::MOUNTAIN; break;
+        case '9': terrain.algorithm = TerrainMesh::VALLEY; break;
+        case '0': terrain.algorithm = TerrainMesh::PLATEAU; break;
+        case 'C': terrain.algorithm = TerrainMesh::CANYON; break;
+        case 'H': terrain.algorithm = TerrainMesh::HILL; break;
+        case 'P': terrain.algorithm = TerrainMesh::PLAIN; break;
+        case 'D': terrain.algorithm = TerrainMesh::DESERT; break;
+        case 'F': terrain.algorithm = TerrainMesh::FOREST; break;
+        case 'T': terrain.algorithm = TerrainMesh::TUNDRA; break;
+        case 'R': needsRegenerate = true; break;
+        case 'L':
+            nn.load("terrain_nn.dat");
+            terrain.algorithm = TerrainMesh::NN;
+            needsRegenerate = true;
+            break;
+        case 'S':
+            nn.save("terrain_nn.dat");
+            break;
+    }
+}
+
+void CaptureMouse(HWND hwnd) {
+    mouseCaptured = true;
+    SetCapture(hwnd);
+    RECT rect;
+    GetWindowRect(hwnd, &rect);
+    int cx = (rect.left + rect.right) / 2;
+    int cy = (rect.top + rect.bottom) / 2;
+    SetCursorPos(cx, cy);
+    lastMouse.x = cx;
+    lastMouse.y = cy;
+    ShowCursor(FALSE);
+}
+
+void ReleaseMouse() {
+    mouseCaptured = false;
+    ReleaseCapture();
+    ShowCursor(TRUE);
+}
+
 
 // --- Main ---
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
@@ -749,6 +792,3 @@ endloop:
     return 0;
 }
 
-// --- Klawisze do wyboru biomu/terenu: 1-NN, 2-Gauss, 3-Sine, 4-Random, 5-Perlin, 6-Fractal, 7-Gradient, M-Mix,
-// 8-Mountain, 9-Valley, 0-Plateau, C-Canyon, H-Hill, P-Plain, D-Desert, F-Forest, T-Tundra, R-Regenerate, S-Save NN, L-Load NN.
-// --- Kamera gracza (WASD + myszka + SPACE/CTRL) -- kliknij LPM aby sterować widokiem ---

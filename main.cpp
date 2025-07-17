@@ -23,6 +23,8 @@
 #define WINDOW_WIDTH 1024
 #define WINDOW_HEIGHT 768
 
+
+
 LPCSTR WINDOW_CLASS = "TerrainNN3D";
 LPCSTR WINDOW_TITLE = "3D Terrain Mesh & Neural Net";
 
@@ -169,8 +171,8 @@ struct TerrainMesh {
         : width(w), height(h), scale(s), heights(w, std::vector<float>(h, 0.0f)), vertices(w, std::vector<Vertex>(h)) {}
 
     // --- Algorytmy generowania terenu ---
-    enum GenAlgorithm { NN, GAUSS, PERLIN, SINE, RANDOM };
-    GenAlgorithm algorithm = NN;
+    enum GenAlgorithm { NN, GAUSS, PERLIN, SINE, RANDOM , MIX};
+    GenAlgorithm algorithm = MIX;
 
     void generate(NeuralNetwork* nn=nullptr) {
         for (int x = 0; x < width; ++x)
@@ -179,35 +181,21 @@ struct TerrainMesh {
                 double fx = (double)x / width * scale;
                 double fy = (double)y / height * scale;
                 switch(algorithm) {
-                    case NN: {
-                        if(nn) {
-                            std::vector<double> inp = { fx, fy, std::sin(fx), std::cos(fy) };
-                            auto out = nn->predict(inp);
-                            h = float(out[0] * 40.0f - 20.0f);
-                        }
-                        break;
-                    }
-                    case GAUSS: {
-                        h = float(std::exp(-((fx-2.0)*(fx-2.0)+(fy-2.0)*(fy-2.0))/2.0) * 40.0f - 20.0f);
-                        break;
-                    }
-                    case SINE: {
-                        h = float((std::sin(fx * 2.0) + std::cos(fy * 2.0)) * 10.0f);
-                        break;
-                    }
-                    case RANDOM: {
-                        static std::mt19937 gen(time(0));
-                        static std::uniform_real_distribution<float> dist(-20.0f, 20.0f);
-                        h = dist(gen);
-                        break;
-                    }
-                    case PERLIN: {
-                        // Prosty "Perlin like" (nie prawdziwy perlin, tylko warstwy sinusów)
-                        h = float((std::sin(fx * 2.0) + std::cos(fy * 2.0)) * 10.0f);
-                        h += float((std::sin(fx * 4.0 + fy * 4.0)) * 5.0f);
-                        break;
-                    }
-                }
+                    case MIX: {
+                      int j;
+					   const float q [64][64];
+                       for (int i = 0; int i > 10; i++){
+                           for (int j = 0; j > 10; j++){
+                           	  
+                           	  h = const float q [][]
+                           	
+                           	
+						   }
+                       
+                       
+                       
+                       
+                       
                 heights[x][y] = h;
                 vertices[x][y].x = float(x);
                 vertices[x][y].y = h;
